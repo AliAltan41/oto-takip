@@ -13,20 +13,26 @@
         label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; color: #4b5563; }
         input { width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 0.95rem; }
         .btn-save { width: 100%; background: #2563eb; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 600; cursor: pointer; margin-top: 8px; }
-        .btn-save:disabled { background: #93c5fd; cursor: not-allowed; }
+        .btn-save.edit-mode { background: #d97706; }
+        .btn-cancel { width: 100%; background: #6b7280; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: 600; cursor: pointer; margin-top: 6px; display: none; }
+        .btn-save:disabled { opacity: 0.6; cursor: not-allowed; }
         .search-box { margin: 20px 0; border-top: 1px solid #e5e7eb; padding-top: 16px; }
         .list-item { background: #f9fafb; border: 1px solid #e5e7eb; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
-        .item-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+        .item-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
         .debt { color: #dc2626; font-weight: bold; }
         .paid { color: #16a34a; font-weight: bold; }
-        .btn-wa { display: inline-block; width: 100%; text-align: center; background: #25D366; color: white; padding: 8px 12px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; border: none; cursor: pointer; }
+        .btn-group { display: flex; gap: 6px; }
+        .btn-action { flex: 1; padding: 8px 6px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; border: none; cursor: pointer; color: white; text-align: center; }
+        .btn-wa { background: #25D366; flex: 1.4; }
+        .btn-edit { background: #f59e0b; }
+        .btn-del { background: #ef4444; }
         .loading { text-align: center; color: #6b7280; padding: 20px; font-size: 0.9rem; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>🚗 Hızlı İşlem & Borç Takip</h2>
+    <h2 id="formBaslik">🚗 Hızlı İşlem & Borç Takip</h2>
     
     <div class="form-group">
         <label>Plaka</label>
@@ -52,7 +58,9 @@
         <label>Alınan Ödenen / Kapora (TL)</label>
         <input type="number" id="odenen" placeholder="1000">
     </div>
-    <button class="btn-save" id="kaydetBtn" onclick="kaydet()">Kaydet</button>
+    
+    <button class="btn-save" id="kaydetBtn" onclick="kaydetVeyaGuncelle()">Kaydet</button>
+    <button class="btn-cancel" id="iptalBtn" onclick="duzenlemeIptal()">Düzenlemeyi İptal Et</button>
 
     <div class="search-box">
         <label>Plaka veya Müşteri Ara</label>
@@ -63,13 +71,14 @@
 </div>
 
 <script>
-    // 👇 ADIM 2'DE ALDIĞIN WEB UYGULAMASI URL'SİNİ BURAYA YAPIŞTIR 👇
     const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxyCXck8clmnchRE8frGF1YwdXhdRuDbjW3DHCCTbMfiIerbgwvackT3c4-mFguaVj2/exec";
     
     let kayitlar = [];
+    let duzenlenenSatir = null; // Güncelleme modunda Google Sheets satır numarasını tutar
+    let duzenlenenTarih = null;
+
     verileriGetir();
 
-    // Google Sheets'ten verileri çek
     async function verileriGetir() {
         try {
             let response = await fetch(SCRIPT_URL);
@@ -80,8 +89,7 @@
         }
     }
 
-    // Google Sheets'e yeni veri gönder
-    async function kaydet() {
+    async function kaydetVeyaGuncelle() {
         let plaka = document.getElementById('plaka').value.toUpperCase().trim();
         let musteri = document.getElementById('musteri').value.trim();
         let telefon = document.getElementById('telefon').value.replace(/\D/g, '');
@@ -98,32 +106,95 @@
         if(telefon.length === 10) telefon = '90' + telefon;
 
         let kalan = toplam - odenen;
-        let yeniKayit = { 
+        let islemTuru = duzenlenenSatir ? "update" : "add";
+        
+        let veriPaketi = { 
+            action: islemTuru,
+            rowNumber: duzenlenenSatir,
             plaka, musteri, telefon, islem, toplam, odenen, kalan, 
-            tarih: new Date().toLocaleDateString('tr-TR') 
+            tarih: duzenlenenSatir ? duzenlenenTarih : new Date().toLocaleDateString('tr-TR') 
         };
 
         let btn = document.getElementById('kaydetBtn');
         btn.disabled = true;
-        btn.innerText = "Google E-Tablo'ya Kaydediliyor...";
+        btn.innerText = duzenlenenSatir ? "Güncelleniyor..." : "Kaydediliyor...";
 
         try {
             await fetch(SCRIPT_URL, {
                 method: 'POST',
-                mode: 'no-cors', // Tarayıcı CORS engelini aşmak için
+                mode: 'no-cors',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(yeniKayit)
+                body: JSON.stringify(veriPaketi)
             });
 
-            // Ekranda anında görünmesi için listeye ekle ve formu temizle
-            kayitlar.unshift(yeniKayit);
-            listele();
-            temizle();
+            duzenlemeIptal();
+            // Tablodaki güncel satır numaralarını senkronize etmek için verileri yeniden çek
+            setTimeout(() => { verileriGetir(); }, 800);
         } catch (error) {
-            alert('Kayıt sırasında bir hata oluştu.');
+            alert('İşlem sırasında bir hata oluştu.');
         } finally {
             btn.disabled = false;
             btn.innerText = "Kaydet";
+        }
+    }
+
+    function duzenleBaslat(index) {
+        let item = kayitlar[index];
+        duzenlenenSatir = item.rowNumber;
+        duzenlenenTarih = item.tarih;
+
+        document.getElementById('plaka').value = item.plaka;
+        document.getElementById('musteri').value = item.musteri;
+        document.getElementById('telefon').value = item.telefon || '';
+        document.getElementById('islem').value = item.islem;
+        document.getElementById('toplam').value = item.toplam;
+        document.getElementById('odenen').value = item.odenen;
+
+        document.getElementById('formBaslik').innerText = "✏️ Kayıt Düzenle / Tahsilat Ekle";
+        let btn = document.getElementById('kaydetBtn');
+        btn.innerText = "Değişiklikleri Güncelle";
+        btn.classList.add('edit-mode');
+        document.getElementById('iptalBtn').style.display = "block";
+
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function duzenlemeIptal() {
+        duzenlenenSatir = null;
+        duzenlenenTarih = null;
+        document.getElementById('plaka').value = '';
+        document.getElementById('musteri').value = '';
+        document.getElementById('telefon').value = '';
+        document.getElementById('islem').value = '';
+        document.getElementById('toplam').value = '';
+        document.getElementById('odenen').value = '';
+
+        document.getElementById('formBaslik').innerText = "🚗 Hızlı İşlem & Borç Takip";
+        let btn = document.getElementById('kaydetBtn');
+        btn.innerText = "Kaydet";
+        btn.classList.remove('edit-mode');
+        document.getElementById('iptalBtn').style.display = "none";
+    }
+
+    async function kayitSil(index) {
+        let item = kayitlar[index];
+        if (!confirm(`${item.plaka} plakalı (${item.musteri}) kaydı kalıcı olarak silmek istediğinize emin misiniz?`)) {
+            return;
+        }
+
+        try {
+            await fetch(SCRIPT_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: "delete", rowNumber: item.rowNumber })
+            });
+
+            kayitlar.splice(index, 1);
+            listele();
+            setTimeout(() => { verileriGetir(); }, 800);
+        } catch (error) {
+            alert('Silme işlemi başarısız oldu.');
         }
     }
 
@@ -169,9 +240,11 @@
                             <div class="${item.kalan > 0 ? 'debt' : 'paid'}">Kalan: ${item.kalan} ₺</div>
                         </div>
                     </div>
-                    <button class="btn-wa" onclick="whatsappGonder(${gercekIndex})">
-                        📲 WhatsApp ile Özet Gönder
-                    </button>
+                    <div class="btn-group">
+                        <button class="btn-action btn-wa" onclick="whatsappGonder(${gercekIndex})">📲 WhatsApp</button>
+                        <button class="btn-action btn-edit" onclick="duzenleBaslat(${gercekIndex})">✏️ Düzenle</button>
+                        <button class="btn-action btn-del" onclick="kayitSil(${gercekIndex})">🗑️ Sil</button>
+                    </div>
                 </div>`;
         });
     }
@@ -182,15 +255,6 @@
             String(item.plaka).includes(aranan) || String(item.musteri).toUpperCase().includes(aranan)
         );
         listele(filtrelenmis);
-    }
-
-    function temizle() {
-        document.getElementById('plaka').value = '';
-        document.getElementById('musteri').value = '';
-        document.getElementById('telefon').value = '';
-        document.getElementById('islem').value = '';
-        document.getElementById('toplam').value = '';
-        document.getElementById('odenen').value = '';
     }
 </script>
 
